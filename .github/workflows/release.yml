@@ -1,0 +1,97 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test
+
+  build:
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, ext: "" }
+          - { os: ubuntu-22.04, target: aarch64-unknown-linux-gnu, ext: "" }
+          - { os: ubuntu-22.04, target: armv7-unknown-linux-gnueabihf, ext: "" }
+          - { os: ubuntu-22.04, target: i686-unknown-linux-gnu, ext: "" }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-musl, ext: "" }
+          - { os: ubuntu-22.04, target: aarch64-unknown-linux-musl, ext: "" }
+          - { os: ubuntu-22.04, target: armv7-unknown-linux-musleabihf, ext: "" }
+          - { os: ubuntu-22.04, target: i686-unknown-linux-musl, ext: "" }
+          - { os: macos-13, target: x86_64-apple-darwin, ext: "" }
+          - { os: macos-14, target: aarch64-apple-darwin, ext: "" }
+          - { os: windows-2022, target: x86_64-pc-windows-msvc, ext: ".exe" }
+          - { os: windows-2022, target: aarch64-pc-windows-msvc, ext: ".exe" }
+          - { os: windows-2022, target: i686-pc-windows-msvc, ext: ".exe" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: taiki-e/install-action@v2
+        if: startsWith(matrix.os, 'ubuntu-')
+        with:
+          tool: cross
+      - name: Build with cross
+        if: startsWith(matrix.os, 'ubuntu-')
+        run: cross build --release --target ${{ matrix.target }} --locked
+      - name: Build native
+        if: ${{ !startsWith(matrix.os, 'ubuntu-') }}
+        run: cargo build --release --target ${{ matrix.target }} --locked
+      - name: Package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME:-${GITHUB_SHA}}"
+          version="${version#v}"
+          binary="target/${{ matrix.target }}/release/websocket-bridge${{ matrix.ext }}"
+          archive="dist/websocket-bridge-${version}-${{ matrix.target }}.tar.gz"
+          if [[ "${{ matrix.ext }}" == ".exe" ]]; then
+            archive="dist/websocket-bridge-${version}-${{ matrix.target }}.zip"
+          fi
+          mkdir -p dist
+          if [[ "${{ matrix.ext }}" == ".exe" ]]; then
+            powershell -NoProfile -Command "Compress-Archive -Force -Path '$binary' -DestinationPath '$archive'"
+          else
+            tar -C "$(dirname "$binary")" -czf "$archive" "$(basename "$binary")"
+          fi
+          ls -lh "$archive"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: websocket-bridge-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
