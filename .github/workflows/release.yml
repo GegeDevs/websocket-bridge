@@ -36,8 +36,8 @@ jobs:
           - { os: ubuntu-22.04, target: aarch64-unknown-linux-musl, ext: "" }
           - { os: ubuntu-22.04, target: armv7-unknown-linux-musleabihf, ext: "" }
           - { os: ubuntu-22.04, target: i686-unknown-linux-musl, ext: "" }
-          - { os: macos-13, target: x86_64-apple-darwin, ext: "" }
-          - { os: macos-15, target: aarch64-apple-darwin, ext: "" }
+          - { os: ubuntu-22.04, target: x86_64-apple-darwin, ext: "", zig: true, tag: test-macos-x86 }
+          - { os: ubuntu-22.04, target: aarch64-apple-darwin, ext: "", zig: true, tag: test-macos-arm64 }
           - { os: windows-2022, target: x86_64-pc-windows-msvc, ext: ".exe" }
           - { os: windows-2022, target: aarch64-pc-windows-msvc, ext: ".exe" }
           - { os: windows-2022, target: i686-pc-windows-msvc, ext: ".exe" }
@@ -48,14 +48,26 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.zig && 'zig-' || '' }}${{ matrix.target }}
       - uses: taiki-e/install-action@v2
-        if: startsWith(matrix.os, 'ubuntu-')
+        if: matrix.zig
         with:
-          tool: cross
-      - name: Build with cross
-        if: startsWith(matrix.os, 'ubuntu-')
-        run: cross build --release --target ${{ matrix.target }} --locked
+          tool: cargo-zigbuild
+      - name: Install Zig
+        if: matrix.zig && matrix.tag != 'test-macos-arm64'
+        run: sudo apt-get update && sudo apt-get install -y zig
+      - name: Install macOS cross SDK
+        if: matrix.zig
+        env:
+          MACOS_SDK_URL: https://github.com/phracker/MacOSX-SDKs/releases/download/11.3/MacOSX11.3.sdk.tar.xz
+        run: |
+          mkdir -p "$HOME/xcc"
+          curl -fL "$MACOS_SDK_URL" | tar -xJ -C "$HOME/xcc"
+          echo "SDKROOT=$HOME/xcc/MacOSX11.3.sdk" >> "$GITHUB_ENV"
+          echo "$HOME/xcc/MacOSX11.3.sdk/usr/lib" >> "$GITHUB_PATH"
+      - name: Build macOS with cross
+        if: matrix.zig
+        run: cargo-zigbuild build --release --target ${{ matrix.target }}-macos --locked
       - name: Build native
         if: ${{ !startsWith(matrix.os, 'ubuntu-') }}
         run: cargo build --release --target ${{ matrix.target }} --locked
