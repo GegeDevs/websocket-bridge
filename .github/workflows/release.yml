@@ -50,12 +50,21 @@ jobs:
         with:
           key: ${{ matrix.zig && 'zig-' || '' }}${{ matrix.target }}
       - uses: taiki-e/install-action@v2
+        if: startsWith(matrix.os, 'ubuntu-') && !matrix.zig
+        with:
+          tool: cross
+      - uses: taiki-e/install-action@v2
         if: matrix.zig
         with:
           tool: cargo-zigbuild
       - name: Install Zig
-        if: matrix.zig && matrix.tag != 'test-macos-arm64'
-        run: sudo apt-get update && sudo apt-get install -y zig
+        if: matrix.zig
+        env:
+          ZIG_URL: https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
+        run: |
+          mkdir -p "$HOME/zig"
+          curl -fL "$ZIG_URL" | tar -xJ -C "$HOME/zig" --strip-components=1
+          echo "$HOME/zig" >> "$GITHUB_PATH"
       - name: Install macOS cross SDK
         if: matrix.zig
         env:
@@ -67,7 +76,10 @@ jobs:
           echo "$HOME/xcc/MacOSX11.3.sdk/usr/lib" >> "$GITHUB_PATH"
       - name: Build macOS with cross
         if: matrix.zig
-        run: cargo-zigbuild build --release --target ${{ matrix.target }}-macos --locked
+        run: cargo-zigbuild build --release --target ${{ matrix.target }} --locked
+      - name: Build with cross
+        if: startsWith(matrix.os, 'ubuntu-') && !matrix.zig
+        run: cross build --release --target ${{ matrix.target }} --locked
       - name: Build native
         if: ${{ !startsWith(matrix.os, 'ubuntu-') }}
         run: cargo build --release --target ${{ matrix.target }} --locked
